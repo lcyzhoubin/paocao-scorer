@@ -50,7 +50,6 @@ class MainActivity : AppCompatActivity() {
         jerseyRecognizer = JerseyNumberRecognizer()
         scoreDb = ScoreDatabase(this)
 
-        // 自动判断当前时段
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         currentPeriod = if (hour < 12) "上午" else "下午"
         overlayView.currentPeriod = currentPeriod
@@ -63,10 +62,8 @@ class MainActivity : AppCompatActivity() {
                 arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO), 1)
         }
 
-        // 使用说明按钮
         findViewById<Button>(R.id.btnHelp).setOnClickListener { showUsageGuide() }
 
-        // 校准噪声
         findViewById<Button>(R.id.btnCalibrate).setOnClickListener {
             overlayView.hint = "校准中，请保持安静..."
             audioAnalyzer.calibrate(config.calibrationSeconds) { db ->
@@ -75,30 +72,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 参数配置
         findViewById<Button>(R.id.btnConfig).setOnClickListener {
             ConfigDialog(this, config) { overlayView.config = config }.show()
         }
 
-        // 班级设置
         findViewById<Button>(R.id.btnClassSetup).setOnClickListener {
             showClassSetupDialog()
         }
 
-        // 历史记录
         findViewById<Button>(R.id.btnHistory).setOnClickListener {
             showHistoryDialog()
         }
 
-        // 排名查询
         findViewById<Button>(R.id.btnRanking).setOnClickListener {
             showRankingDialog()
         }
     }
 
-    /**
-     * 使用说明
-     */
     private fun showUsageGuide() {
         val guide = """
             【跑操评分APP 使用说明】
@@ -138,9 +128,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * 班级设置对话框
-     */
     private fun showClassSetupDialog() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -174,9 +161,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * 历史记录查询
-     */
     private fun showHistoryDialog() {
         val options = arrayOf("按日期+时段查询", "按班级查询", "全部记录")
         AlertDialog.Builder(this)
@@ -217,7 +201,7 @@ class MainActivity : AppCompatActivity() {
     private fun queryByClass() {
         val et = EditText(this).apply {
             hint = "输入班级号"
-          inputType = InputType.TYPE_CLASS_NUMBER
+            inputType = InputType.TYPE_CLASS_NUMBER
         }
         AlertDialog.Builder(this)
             .setTitle("按班级查询")
@@ -256,9 +240,6 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * 排名查询
-     */
     private fun showRankingDialog() {
         val dates = scoreDb.getAvailableDates()
         if (dates.isEmpty()) {
@@ -359,32 +340,26 @@ class MainActivity : AppCompatActivity() {
                     ((ls.y() + rs.y()) / 2 * rotated.height)
                 )
             }
-            // 收集所有可见关键点用于动作一致性分析
             val personPts = lms.map { it.x() to it.y() }
             personLandmarks.add(personPts)
             people.add(OverlayView.Person(lms))
         }
 
-        // 1. 排面整齐度
         val alignment = ScoringEngine.scoreAlignment(
             shoulderPoints, config.alignmentSensitivity, config.sameRowThreshold
         )
 
-        // 2. 出勤率
         val count = people.size
         val countScore = ScoringEngine.scoreCount(count, config.expectedStudents)
 
-        // 3. 响亮度
         val snr = audioAnalyzer.getSnr()
         val loudness = ScoringEngine.scoreLoudness(snr, config.snrMin, config.snrMax)
 
-        // 4. 动作一致性
         val motion = ScoringEngine.scoreMotionConsistency(
             previousLandmarks, personLandmarks, config.motionSensitivity
         )
         previousLandmarks = personLandmarks
 
-        // 5. 间距评分（简化：使用画面底部的y坐标）
         val spacing = if (shoulderPoints.isNotEmpty()) {
             val bottomY = shoulderPoints.maxByOrNull { it.second }?.second ?: 0f
             ScoringEngine.scoreSpacing(
@@ -392,10 +367,57 @@ class MainActivity : AppCompatActivity() {
             )
         } else 50f
 
-        // 综合评分
         val total = ScoringEngine.combine(
             alignment, countScore, loudness, spacing, motion, config
         )
 
         val scoreResult = ScoreResult(
- 
+            total, alignment, count, countScore, loudness, spacing, motion, snr
+        )
+
+        scope.launch {
+            val jerseys = jerseyRecognizer.recognize(rotated, personLandmarks)
+            runOnUiThread {
+                overlayView.update(scoreResult.copy(jerseyNumbers = jerseys), people, jerseys)
+            }
+
+            val now = System.currentTimeMillis()
+            if (now - lastSaveTime > saveIntervalMs && count > 0) {
+                lastSaveTime = now
+                val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                scoreDb.saveScore(
+                    currentClassNumber, date, currentPeriod,
+                    total, alignment, count, countScore,
+                    loudness, spacing, motion, snr
+                )
+            }
+        }
+    }
+
+    private fun hasPermissions() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            startAll()
+            showUsageGuide()
+        } else {
+            overlayView.hint = "需要摄像头和麦克风权限"
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown()
+        audioAnalyzer.stop()
+        poseAnalyzer.close()
+        jerseyRecognizer.close()
+        scope.cancel()
+    }
+}
