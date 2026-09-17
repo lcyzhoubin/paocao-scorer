@@ -17,23 +17,17 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # 注意：去掉了 Setup Android SDK，直接用系统自带的
-           - name: Download MediaPipe models
+      - name: Download MediaPipe models
         run: |
           mkdir -p app/src/main/assets
-          # 下载姿态检测模型
-          wget -O app/src/main/assets/pose_landmarker_full.task \
-            https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
-          # 👇 新增：下载人脸检测模型
-          wget -O app/src/main/assets/face_detection_short_range.task \
-            https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.task
+          wget -O app/src/main/assets/pose_landmarker_full.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
+          wget -O app/src/main/assets/face_detection_short_range.task https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.task
 
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
           ls -la release.keystore
 
-      # 强制安装并使用 8.4 版本的 Gradle，解决兼容性问题
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
@@ -51,8 +45,7 @@ jobs:
       - name: Rename and Upload
         run: |
           mkdir -p output
-          cp app/build/outputs/apk/release/app-release.apk \
-             output/PaocaoScorer-v1.0-signed.apk
+          cp app/build/outputs/apk/release/app-release.apk output/PaocaoScorer-v1.0-signed.apk
 
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
