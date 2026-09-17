@@ -18,9 +18,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-
       - name: Download MediaPipe model
         run: |
           mkdir -p app/src/main/assets
