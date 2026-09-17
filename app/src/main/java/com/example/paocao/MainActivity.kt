@@ -39,6 +39,9 @@ class MainActivity : AppCompatActivity() {
     private var lastSaveTime = 0L
     private val saveIntervalMs = 30000L
     private var previousLandmarks: List<List<Pair<Float, Float>>>? = null
+        // 👇 新增：记录上一帧的人脸和肩膀Y坐标，用于计算动作起伏一致性
+    private var prevHeadYList: List<Float>? = null
+    private var prevShoulderYList: List<Float>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -320,50 +323,69 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processFrame(imageProxy: ImageProxy) {
-        val bitmap = imageProxy.toBitmap()
-        val rotation = imageProxy.imageInfo.rotationDegrees
-        val rotated = if (rotation != 0) {
-            val m = Matrix().apply { postRotate(rotation.toFloat()) }
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
-        } else bitmap
-
-        val result = poseAnalyzer.detect(rotated)
-
+        // 1. 提取姿态（骨架）数据
         val shoulderPoints = mutableListOf<Pair<Float, Float>>()
         val people = mutableListOf<OverlayView.Person>()
         val personLandmarks = mutableListOf<List<Pair<Float, Float>>>()
+        
+        // 👇 新增：提取用于动作一致性的Y坐标
+        val currentShoulderYList = mutableListOf<Float>()
+        val currentHeadYList = mutableListOf<Float>() // 注意：这里的人头Y来自姿态的关键点（鼻子/眼睛）
 
         result.landmarks().forEach { lms ->
             val ls = lms[11]; val rs = lms[12]
+            // 肩膀
             if (ls.visibility().orElse(0f) > config.minConfidence &&
                 rs.visibility().orElse(0f) > config.minConfidence) {
-                shoulderPoints.add(
-                    ((ls.x() + rs.x()) / 2 * rotated.width) to
-                    ((ls.y() + rs.y()) / 2 * rotated.height)
-                )
+                val sX = (ls.x() + rs.x()) / 2 * rotated.width
+                val sY = (ls.y() + rs.y()) / 2 * rotated.height
+                shoulderPoints.add(sX to sY)
+                currentShoulderYList.add(sY)
             }
+            // 脑袋（用鼻子关键点 0 的Y坐标作为参考，或者眼睛耳朵）
+            val nose = lms[0]
+            if (nose.visibility().orElse(0f) > config.minConfidence) {
+                currentHeadYList.add(nose.y() * rotated.height)
+            }
+            
             val personPts = lms.map { it.x() to it.y() }
             personLandmarks.add(personPts)
             people.add(OverlayView.Person(lms))
         }
 
+        // 2. 提取人脸数据（用于计数和补充头部坐标）
+        val faceBoxes = faceAnalyzer.detect(rotated)
+        // 将人脸中心点也加入头部Y坐标列表（如果人脸比姿态检测到的多）
+        faceBoxes.forEach { 
+            currentHeadYList.add(it.centerY) 
+        }
+
+        // 3. 计算各项评分
+        
+        // 排面整齐度（用肩膀的点）
         val alignment = ScoringEngine.scoreAlignment(
             shoulderPoints, config.alignmentSensitivity, config.sameRowThreshold
         )
 
+        // 人数识别（取人脸和姿态检测的最大值，因为人脸遮挡少）
         val poseCount = people.size
-val faceCount = faceAnalyzer.detect(rotated) // 人脸/人头辅助计数
-// 取两者最大值，解决紧挨着漏检的问题
-val count = maxOf(poseCount, faceCount)
+        val faceCount = faceBoxes.size
+        val count = maxOf(poseCount, faceCount) 
+
         val countScore = ScoringEngine.scoreCount(count, config.expectedStudents)
 
         val snr = audioAnalyzer.getSnr()
         val loudness = ScoringEngine.scoreLoudness(snr, config.snrMin, config.snrMax)
 
+        // 👇 动作一致性：传入当前和上一帧的头部、肩膀Y坐标
         val motion = ScoringEngine.scoreMotionConsistency(
-            previousLandmarks, personLandmarks, config.motionSensitivity
+            currentHeadYList, currentShoulderYList,
+            prevHeadYList, prevShoulderYList,
+            config.motionSensitivity
         )
-        previousLandmarks = personLandmarks
+        // 更新历史数据
+        prevHeadYList = currentHeadYList
+        prevShoulderYList = currentShoulderYList
 
         val spacing = if (shoulderPoints.isNotEmpty()) {
             val bottomY = shoulderPoints.maxByOrNull { it.second }?.second ?: 0f
@@ -374,30 +396,7 @@ val count = maxOf(poseCount, faceCount)
 
         val total = ScoringEngine.combine(
             alignment, countScore, loudness, spacing, motion, config
-        )
-
-        val scoreResult = ScoreResult(
-            total, alignment, count, countScore, loudness, spacing, motion, snr
-        )
-
-        scope.launch {
-            val jerseys = jerseyRecognizer.recognize(rotated, personLandmarks)
-            runOnUiThread {
-                overlayView.update(scoreResult.copy(jerseyNumbers = jerseys), people, jerseys)
-            }
-
-            val now = System.currentTimeMillis()
-            if (now - lastSaveTime > saveIntervalMs && count > 0) {
-                lastSaveTime = now
-                val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                scoreDb.saveScore(
-                    currentClassNumber, date, currentPeriod,
-                    total, alignment, count, countScore,
-                    loudness, spacing, motion, snr
-                )
-            }
-        }
-    }
+        ) }
 
     private fun hasPermissions() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
