@@ -46,4 +46,4 @@ class PoseAnalyzer(context: Context) {
     fun close() {
         try { landmarker?.close() } catch (e: Exception) {}
     }
-}}
+}
