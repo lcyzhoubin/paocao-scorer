@@ -54,5 +54,9 @@ dependencies {
     implementation("androidx.camera:camera-view:$camerax")
 
     implementation("com.google.mediapipe:tasks-vision:0.10.9")
+    
+    // 👇 新增：ML Kit 文字识别库和依赖库
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+    
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
