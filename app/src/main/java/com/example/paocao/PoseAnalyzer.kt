@@ -1,37 +1,49 @@
 package com.example.paocao
-import com.google.mediapipe.tasks.core.Delegate
+
 import android.content.Context
 import android.graphics.Bitmap
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
 
 class PoseAnalyzer(context: Context) {
-    private val landmarker: PoseLandmarker
+    private var landmarker: PoseLandmarker? = null
+    var errorMessage: String = ""
 
     init {
-        val baseOptions = BaseOptions.builder()
-            .setModelAssetPath("pose_landmarker_full.task")
-            .setDelegate(Delegate.CPU)
-            .build()
+        try {
+            val baseOptions = BaseOptions.builder()
+                .setModelAssetPath("pose_landmarker_full.task")
+                .setDelegate(Delegate.CPU)
+                .build()
 
-        val options = PoseLandmarker.PoseLandmarkerOptions.builder()
-            .setBaseOptions(baseOptions)
-            .setRunningMode(RunningMode.IMAGE)
-            .setNumPoses(20)
-            .setMinPoseDetectionConfidence(0.3f)
-            .setMinPosePresenceConfidence(0.3f)
-            .setMinTrackingConfidence(0.3f)
-            .build()
+            val options = PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(baseOptions)
+                .setRunningMode(RunningMode.IMAGE)
+                .setNumPoses(20)
+                .setMinPoseDetectionConfidence(0.3f)
+                .setMinPosePresenceConfidence(0.3f)
+                .setMinTrackingConfidence(0.3f)
+                .build()
 
-        landmarker = PoseLandmarker.createFromOptions(context, options)
+            landmarker = PoseLandmarker.createFromOptions(context, options)
+        } catch (e: Exception) {
+            errorMessage = "姿态模型加载失败: ${e.message}"
+        }
     }
 
-    fun detect(bitmap: Bitmap): PoseLandmarkerResult {
-        return landmarker.detect(BitmapImageBuilder(bitmap).build())
+    fun detect(bitmap: Bitmap): PoseLandmarkerResult? {
+        return try {
+            landmarker?.detect(BitmapImageBuilder(bitmap).build())
+        } catch (e: Exception) {
+            null
+        }
     }
 
-    fun close() = landmarker.close()
-}
+    fun close() {
+        try { landmarker?.close() } catch (e: Exception) {}
+    }
+}}
