@@ -323,18 +323,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processFrame(imageProxy: ImageProxy) {
-        // 1. 提取姿态（骨架）数据
+    val bitmap = imageProxy.toBitmap()
+    val rotation = imageProxy.imageInfo.rotationDegrees
+    val rotated = if (rotation != 0) {
+        val m = Matrix().apply { postRotate(rotation.toFloat()) }
+        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
+    } else bitmap
+
+    // 👇 把整个分析逻辑放入协程，因为 ML Kit 的人脸检测是挂起函数
+    scope.launch {
+        // 1. 姿态检测（骨架）
+        val result = poseAnalyzer.detect(rotated)
+
         val shoulderPoints = mutableListOf<Pair<Float, Float>>()
         val people = mutableListOf<OverlayView.Person>()
         val personLandmarks = mutableListOf<List<Pair<Float, Float>>>()
-        
-        // 👇 新增：提取用于动作一致性的Y坐标
         val currentShoulderYList = mutableListOf<Float>()
-        val currentHeadYList = mutableListOf<Float>() // 注意：这里的人头Y来自姿态的关键点（鼻子/眼睛）
+        val currentHeadYList = mutableListOf<Float>()
 
         result.landmarks().forEach { lms ->
             val ls = lms[11]; val rs = lms[12]
-            // 肩膀
             if (ls.visibility().orElse(0f) > config.minConfidence &&
                 rs.visibility().orElse(0f) > config.minConfidence) {
                 val sX = (ls.x() + rs.x()) / 2 * rotated.width
@@ -342,48 +350,40 @@ class MainActivity : AppCompatActivity() {
                 shoulderPoints.add(sX to sY)
                 currentShoulderYList.add(sY)
             }
-            // 脑袋（用鼻子关键点 0 的Y坐标作为参考，或者眼睛耳朵）
             val nose = lms[0]
             if (nose.visibility().orElse(0f) > config.minConfidence) {
                 currentHeadYList.add(nose.y() * rotated.height)
             }
-            
             val personPts = lms.map { it.x() to it.y() }
             personLandmarks.add(personPts)
             people.add(OverlayView.Person(lms))
         }
 
-        // 2. 提取人脸数据（用于计数和补充头部坐标）
+        // 2. 人脸检测（ML Kit 版本，使用挂起函数）
         val faceBoxes = faceAnalyzer.detect(rotated)
-        // 将人脸中心点也加入头部Y坐标列表（如果人脸比姿态检测到的多）
-        faceBoxes.forEach { 
-            currentHeadYList.add(it.centerY) 
+        faceBoxes.forEach {
+            currentHeadYList.add(it.centerY)
         }
 
         // 3. 计算各项评分
-        
-        // 排面整齐度（用肩膀的点）
         val alignment = ScoringEngine.scoreAlignment(
             shoulderPoints, config.alignmentSensitivity, config.sameRowThreshold
         )
 
-        // 人数识别（取人脸和姿态检测的最大值，因为人脸遮挡少）
+        // 人数识别（取人脸和姿态检测的最大值）
         val poseCount = people.size
         val faceCount = faceBoxes.size
-        val count = maxOf(poseCount, faceCount) 
-
+        val count = maxOf(poseCount, faceCount)
         val countScore = ScoringEngine.scoreCount(count, config.expectedStudents)
 
         val snr = audioAnalyzer.getSnr()
         val loudness = ScoringEngine.scoreLoudness(snr, config.snrMin, config.snrMax)
 
-        // 👇 动作一致性：传入当前和上一帧的头部、肩膀Y坐标
         val motion = ScoringEngine.scoreMotionConsistency(
             currentHeadYList, currentShoulderYList,
             prevHeadYList, prevShoulderYList,
             config.motionSensitivity
         )
-        // 更新历史数据
         prevHeadYList = currentHeadYList
         prevShoulderYList = currentShoulderYList
 
@@ -396,8 +396,33 @@ class MainActivity : AppCompatActivity() {
 
         val total = ScoringEngine.combine(
             alignment, countScore, loudness, spacing, motion, config
-        ) }
+        )
 
+        val scoreResult = ScoreResult(
+            total, alignment, count, countScore, loudness, spacing, motion, snr
+        )
+
+        // 4. 识别号码
+        val jerseys = jerseyRecognizer.recognize(rotated, personLandmarks)
+
+        // 5. 回到主线程更新 UI
+        withContext(Dispatchers.Main) {
+            overlayView.update(scoreResult.copy(jerseyNumbers = jerseys), people, jerseys)
+            
+            // 定期存储评分
+            val now = System.currentTimeMillis()
+            if (now - lastSaveTime > saveIntervalMs && count > 0) {
+                lastSaveTime = now
+                val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                scoreDb.saveScore(
+                    currentClassNumber, date, currentPeriod,
+                    total, alignment, count, countScore,
+                    loudness, spacing, motion, snr
+                )
+            }
+        }
+    }
+}
     private fun hasPermissions() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED &&
