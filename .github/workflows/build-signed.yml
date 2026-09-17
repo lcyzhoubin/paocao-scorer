@@ -20,9 +20,7 @@ jobs:
       - name: Download MediaPipe models
         run: |
           mkdir -p app/src/main/assets
-          wget -O app/src/main/assets/pose_landmarker_full.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
-          wget -O app/src/main/assets/face_detection_short_range.task https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.task
-
+          
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
