@@ -1,0 +1,66 @@
+name: Build Signed APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Download MediaPipe model
+        run: |
+          mkdir -p app/src/main/assets
+          wget -O app/src/main/assets/pose_landmarker_full.task \
+            https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+          ls -la release.keystore
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew || true
+
+      - name: Build Release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.4
+          fi
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Verify signature
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          ls -la $APK
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose $APK || true
+
+      - name: Rename and Upload
+        run: |
+          mkdir -p output
+          cp app/build/outputs/apk/release/app-release.apk \
+             output/PaocaoScorer-v1.0-signed.apk
+
+      - name: Upload Signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: paocao-scorer-signed
+          path: output/PaocaoScorer-v1.0-signed.apk
+          retention-days: 90
