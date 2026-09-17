@@ -1,5 +1,5 @@
 package com.example.paocao
-
+import com.google.mediapipe.tasks.core.Delegate
 import android.content.Context
 import android.graphics.Bitmap
 import com.google.mediapipe.framework.image.BitmapImageBuilder
@@ -14,7 +14,7 @@ class PoseAnalyzer(context: Context) {
     init {
         val baseOptions = BaseOptions.builder()
             .setModelAssetPath("pose_landmarker_full.task")
-            .setDelegate(BaseOptions.Delegate.CPU)
+            .setDelegate(Delegate.CPU)
             .build()
 
         val options = PoseLandmarker.PoseLandmarkerOptions.builder()
