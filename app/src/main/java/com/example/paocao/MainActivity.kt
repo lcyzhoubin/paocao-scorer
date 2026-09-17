@@ -26,6 +26,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var overlayView: OverlayView
     private lateinit var poseAnalyzer: PoseAnalyzer
+    private lateinit var faceAnalyzer: FaceAnalyzer
     private lateinit var audioAnalyzer: AudioAnalyzer
     private lateinit var jerseyRecognizer: JerseyNumberRecognizer
     private lateinit var scoreDb: ScoreDatabase
@@ -46,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         overlayView = findViewById(R.id.overlayView)
         overlayView.config = config
         poseAnalyzer = PoseAnalyzer(this)
+        faceAnalyzer = FaceAnalyzer(this)
         audioAnalyzer = AudioAnalyzer()
         jerseyRecognizer = JerseyNumberRecognizer()
         scoreDb = ScoreDatabase(this)
@@ -349,7 +351,10 @@ class MainActivity : AppCompatActivity() {
             shoulderPoints, config.alignmentSensitivity, config.sameRowThreshold
         )
 
-        val count = people.size
+        val poseCount = people.size
+val faceCount = faceAnalyzer.detect(rotated) // 人脸/人头辅助计数
+// 取两者最大值，解决紧挨着漏检的问题
+val count = maxOf(poseCount, faceCount)
         val countScore = ScoringEngine.scoreCount(count, config.expectedStudents)
 
         val snr = audioAnalyzer.getSnr()
@@ -417,6 +422,7 @@ class MainActivity : AppCompatActivity() {
         cameraExecutor.shutdown()
         audioAnalyzer.stop()
         poseAnalyzer.close()
+        faceAnalyzer.close()
         jerseyRecognizer.close()
         scope.cancel()
     }
