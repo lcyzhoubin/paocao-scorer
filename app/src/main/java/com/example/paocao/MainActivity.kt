@@ -138,18 +138,50 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showClassSetupDialog() {
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(50, 30, 50, 30) }
-        val etClass = EditText(this).apply { hint = "班级号"; setText(currentClassNumber.toString()); inputType = InputType.TYPE_CLASS_NUMBER }
-        val etPeriod = EditText(this).apply { hint = "时段（上午/下午）"; setText(currentPeriod); inputType = InputType.TYPE_CLASS_TEXT }
-        layout.addView(etClass); layout.addView(etPeriod)
-        AlertDialog.Builder(this).setTitle("班级设置").setView(layout)
-            .setPositiveButton("确定") { _, _ ->
-                currentClassNumber = etClass.text.toString().toIntOrNull() ?: 1
-                currentPeriod = etPeriod.text.toString().ifEmpty { "上午" }
-                overlayView.currentClassNumber = currentClassNumber
-                overlayView.currentPeriod = currentPeriod
-            }.setNegativeButton("取消", null).show()
+    val layout = LinearLayout(this).apply { 
+        orientation = LinearLayout.VERTICAL
+        setPadding(50, 30, 50, 30) 
     }
+    
+    // 输入框1：班级号
+    val etClass = EditText(this).apply { 
+        hint = "班级号（如1）"
+        setText(currentClassNumber.toString())
+        inputType = InputType.TYPE_CLASS_NUMBER
+    }
+    // 👇 新增：输入框2，用于设置该班级的总人数
+    val etTotal = EditText(this).apply { 
+        hint = "该班总人数（如50）"
+        setText(config.expectedStudents.toString())
+        inputType = InputType.TYPE_CLASS_NUMBER
+    }
+    // 输入框3：时段
+    val etPeriod = EditText(this).apply { 
+        hint = "时段（上午/下午）"
+        setText(currentPeriod)
+        inputType = InputType.TYPE_CLASS_TEXT
+    }
+
+    layout.addView(etClass)
+    layout.addView(etTotal)
+    layout.addView(etPeriod)
+
+    AlertDialog.Builder(this)
+        .setTitle("班级设置")
+        .setView(layout)
+        .setPositiveButton("确定") { _, _ ->
+            currentClassNumber = etClass.text.toString().toIntOrNull() ?: 1
+            // 👇 保存总人数到配置中，用于出勤率计算
+            config.expectedStudents = etTotal.text.toString().toIntOrNull() ?: 50
+            currentPeriod = etPeriod.text.toString().ifEmpty { "上午" }
+            
+            overlayView.currentClassNumber = currentClassNumber
+            overlayView.currentPeriod = currentPeriod
+            Toast.makeText(this, "设置成功: ${currentClassNumber}班 应到${config.expectedStudents}人", Toast.LENGTH_SHORT).show()
+        }
+        .setNegativeButton("取消", null)
+        .show()
+}
 
     private fun showHistoryDialog() {
         val options = arrayOf("按日期+时段查询", "按班级查询", "全部记录")
