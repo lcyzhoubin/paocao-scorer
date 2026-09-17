@@ -111,69 +111,53 @@ object ScoringEngine {
         return (snr - snrMin) / (snrMax - snrMin) * 100f
     }
 
-    /**
-     * 4. 动作一致性评分
-     * 原理：基于关节角度余弦相似度（参考学术研究验证的方法）
-     * 对肩部和髋部的关键点计算向量方向一致性
-     * 抖动越小、方向越一致，得分越高
+       /**
+     * 4. 动作一致性评分 (升级版：基于脑袋和肩膀的Y轴起伏)
+     * 跑操时，所有人的脑袋和肩膀应该同步上下起伏。
+     * 我们通过计算同一帧内所有人头和肩膀Y坐标的标准差，以及跨帧的位移方差来判断。
      */
     fun scoreMotionConsistency(
-        previousLandmarks: List<List<Pair<Float, Float>>>?,
-        currentLandmarks: List<List<Pair<Float, Float>>>,
+        headYList: List<Float>,
+        shoulderYList: List<Float>,
+        previousHeadYList: List<Float>?,
+        previousShoulderYList: List<Float>?,
         sensitivity: Float
     ): Float {
-        if (currentLandmarks.size < 3) return 50f  // 人数太少，给中位分
+        if (headYList.size < 3 && shoulderYList.size < 3) return 50f // 数据不足，给中位分
 
-        // 使用肩部向量(左肩→右肩)方向的一致性
-        val shoulderVectors = mutableListOf<Pair<Float, Float>>()
-        for (person in currentLandmarks) {
-            if (person.size > 12) {
-                val lx = person[11].first; val ly = person[11].second
-                val rx = person[12].first; val ry = person[12].second
-                shoulderVectors.add((rx - lx) to (ry - ly))
-            }
+        // 1. 空间一致性：当前帧，大家是不是在同一个水平线上
+        val headYStdDev = if (headYList.size > 1) {
+            val mean = headYList.average().toFloat()
+            sqrt(headYList.map { (it - mean) * (it - mean) }.average()).toFloat()
+        } else 0f
+
+        val shoulderYStdDev = if (shoulderYList.size > 1) {
+            val mean = shoulderYList.average().toFloat()
+            sqrt(shoulderYList.map { (it - mean) * (it - mean) }.average()).toFloat()
+        } else 0f
+
+        // 2. 时间一致性：上一帧和这一帧，起伏节奏是否一致（计算位移方差）
+        var headJitter = 0f
+        var shoulderJitter = 0f
+        if (previousHeadYList != null && previousHeadYList.size == headYList.size) {
+            headJitter = sqrt(headYList.indices.map {
+                val diff = headYList[it] - previousHeadYList[it]
+                diff * diff
+            }.average()).toFloat()
+        }
+        if (previousShoulderYList != null && previousShoulderYList.size == shoulderYList.size) {
+            shoulderJitter = sqrt(shoulderYList.indices.map {
+                val diff = shoulderYList[it] - previousShoulderYList[it]
+                diff * diff
+            }.average()).toFloat()
         }
 
-        if (shoulderVectors.size < 3) return 50f
-
-        // 计算所有肩部向量的方向角
-        val angles = shoulderVectors.map { (dx, dy) ->
-            if (abs(dx) < 1e-6f && abs(dy) < 1e-6f) 0f
-            else Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
-        }
-
-        // 计算方向角的标准差（越小越一致）
-        val meanAngle = angles.average().toFloat()
-        val angleStd = sqrt(angles.map {
-            val diff = it - meanAngle
-            diff * diff
-        }.average()).toFloat()
-
-        // 如果有上一帧数据，额外计算帧间抖动
-        var jitterPenalty = 0f
-        if (previousLandmarks != null && previousLandmarks.size == currentLandmarks.size) {
-            var totalJitter = 0f
-            var count = 0
-            for (i in currentLandmarks.indices) {
-                val prev = previousLandmarks[i]
-                val curr = currentLandmarks[i]
-                if (prev.size > 12 && curr.size > 12) {
-                    // 肩部关键点的帧间位移
-                    val dx1 = curr[11].first - prev[11].first
-                    val dy1 = curr[11].second - prev[11].second
-                    val dx2 = curr[12].first - prev[12].first
-                    val dy2 = curr[12].second - prev[12].second
-                    totalJitter += sqrt(dx1 * dx1 + dy1 * dy1) +
-                                   sqrt(dx2 * dx2 + dy2 * dy2)
-                    count += 2
-                }
-            }
-            if (count > 0) jitterPenalty = (totalJitter / count) * 0.1f
-        }
-
-        // 映射到分数：方向标准差越小、抖动越小，分数越高
-        val score = 100f * exp(-sensitivity * (angleStd / 45f) - jitterPenalty)
-        return score.coerceIn(0f, 100f)
+        // 综合空间和时间偏差，映射到0-100分
+        // 分母加了 scaleFactor 防止数值过小导致分数过于敏感
+        val totalDeviation = (headYStdDev * 0.5f) + (shoulderYStdDev * 0.3f) + 
+                            (headJitter * 0.1f) + (shoulderJitter * 0.1f)
+                            
+        return (100f * exp(-sensitivity * totalDeviation / 50f)).coerceIn(0f, 100f)
     }
 
     /**
