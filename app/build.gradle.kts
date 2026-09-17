@@ -55,7 +55,8 @@ dependencies {
 
     implementation("com.google.mediapipe:tasks-vision:0.10.9")
     
-    // 👇 新增：ML Kit 文字识别库和依赖库
+    // 👇 新增：ML Kit 人脸检测和文字识别
+    implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.mlkit:text-recognition:16.0.0")
     
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
