@@ -16,11 +16,11 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-
       - name: Download MediaPipe models
         run: |
           mkdir -p app/src/main/assets
-          
+          # 下载轻量级姿态模型（体积小，兼容性好）
+          wget -O app/src/main/assets/pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
