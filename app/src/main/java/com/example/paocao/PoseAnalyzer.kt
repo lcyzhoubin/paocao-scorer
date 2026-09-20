@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarkerResult
@@ -14,9 +15,10 @@ class PoseAnalyzer(context: Context) {
 
     init {
         try {
-            // 注意：去掉了强制指定 CPU 委托，让 MediaPipe 自动适配
+            // 👇 改用轻量级模型，并强制指定 CPU 运行，避免 GPU 兼容性崩溃
             val baseOptions = BaseOptions.builder()
-                .setModelAssetPath("pose_landmarker_full.task")
+                .setModelAssetPath("pose_landmarker_lite.task")
+                .setDelegate(Delegate.CPU)
                 .build()
 
             val options = PoseLandmarker.PoseLandmarkerOptions.builder()
