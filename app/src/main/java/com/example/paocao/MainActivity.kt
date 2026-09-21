@@ -19,8 +19,6 @@ import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
-import java.io.File
-import java.io.PrintWriter
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executors
@@ -28,7 +26,6 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
 
     private lateinit var overlayView: OverlayView
-    private var poseAnalyzer: PoseAnalyzer? = null
     private var audioAnalyzer: AudioAnalyzer? = null
     private var jerseyRecognizer: JerseyNumberRecognizer? = null
     private var faceAnalyzer: FaceAnalyzer? = null
@@ -42,82 +39,46 @@ class MainActivity : AppCompatActivity() {
     private var currentPeriod = "上午"
     private var lastSaveTime = 0L
     private val saveIntervalMs = 30000L
-    private var prevHeadYList: List<Float>? = null
-    private var prevShoulderYList: List<Float>? = null
+    private var prevFaceYList: List<Float>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // 👇 关键：设置全局崩溃捕获，写入日志文件
-        setupCrashHandler()
-
         setContentView(R.layout.activity_main)
 
-        try {
-            overlayView = findViewById(R.id.overlayView)
-            overlayView.config = config
-            
-            poseAnalyzer = PoseAnalyzer(this)
-            audioAnalyzer = AudioAnalyzer()
-            jerseyRecognizer = JerseyNumberRecognizer()
-            faceAnalyzer = FaceAnalyzer(this)
-            scoreDb = ScoreDatabase(this)
+        overlayView = findViewById(R.id.overlayView)
+        overlayView.config = config
+        
+        audioAnalyzer = AudioAnalyzer()
+        jerseyRecognizer = JerseyNumberRecognizer()
+        faceAnalyzer = FaceAnalyzer(this)
+        scoreDb = ScoreDatabase(this)
 
-            val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-            currentPeriod = if (hour < 12) "上午" else "下午"
-            overlayView.currentPeriod = currentPeriod
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        currentPeriod = if (hour < 12) "上午" else "下午"
+        overlayView.currentPeriod = currentPeriod
 
-            // 检查模型加载是否失败
-            if (poseAnalyzer?.errorMessage?.isNotEmpty() == true) {
-                Toast.makeText(this, poseAnalyzer?.errorMessage, Toast.LENGTH_LONG).show()
-            }
-
-            if (hasPermissions()) {
-                startAll()
-                showUsageGuide()
-            } else {
-                ActivityCompat.requestPermissions(this,
-                    arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO), 1)
-            }
-
-            findViewById<Button>(R.id.btnHelp).setOnClickListener { showUsageGuide() }
-            findViewById<Button>(R.id.btnCalibrate).setOnClickListener {
-                overlayView.hint = "校准中，请保持安静..."
-                audioAnalyzer?.calibrate(config.calibrationSeconds) { db ->
-                    overlayView.noiseFloorDb = db
-                    overlayView.hint = "校准完成，开始评分"
-                }
-            }
-            findViewById<Button>(R.id.btnConfig).setOnClickListener {
-                ConfigDialog(this, config) { overlayView.config = config }.show()
-            }
-            findViewById<Button>(R.id.btnClassSetup).setOnClickListener { showClassSetupDialog() }
-            findViewById<Button>(R.id.btnHistory).setOnClickListener { showHistoryDialog() }
-            findViewById<Button>(R.id.btnRanking).setOnClickListener { showRankingDialog() }
-            
-        } catch (e: Exception) {
-            // 如果初始化崩溃，写入日志并提示
-            saveCrashLog(e)
-            Toast.makeText(this, "初始化失败: ${e.message}\n请查看日志文件", Toast.LENGTH_LONG).show()
+        if (hasPermissions()) {
+            startAll()
+            showUsageGuide()
+        } else {
+            ActivityCompat.requestPermissions(this,
+                arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO), 1)
         }
-    }
 
-    private fun setupCrashHandler() {
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            saveCrashLog(throwable)
-            defaultHandler?.uncaughtException(thread, throwable)
+        findViewById<Button>(R.id.btnHelp).setOnClickListener { showUsageGuide() }
+        findViewById<Button>(R.id.btnCalibrate).setOnClickListener {
+            overlayView.hint = "校准中，请保持安静..."
+            audioAnalyzer?.calibrate(config.calibrationSeconds) { db ->
+                overlayView.noiseFloorDb = db
+                overlayView.hint = "校准完成，开始评分"
+            }
         }
-    }
-
-    private fun saveCrashLog(e: Throwable) {
-        try {
-            val file = File(getExternalFilesDir(null), "crash_log.txt")
-            val writer = PrintWriter(file)
-            writer.println("崩溃时间: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}")
-            e.printStackTrace(writer)
-            writer.close()
-        } catch (ignored: Exception) {}
+        findViewById<Button>(R.id.btnConfig).setOnClickListener {
+            ConfigDialog(this, config) { overlayView.config = config }.show()
+        }
+        findViewById<Button>(R.id.btnClassSetup).setOnClickListener { showClassSetupDialog() }
+        findViewById<Button>(R.id.btnHistory).setOnClickListener { showHistoryDialog() }
+        findViewById<Button>(R.id.btnRanking).setOnClickListener { showRankingDialog() }
     }
 
     private fun showUsageGuide() {
@@ -126,11 +87,12 @@ class MainActivity : AppCompatActivity() {
             ━━ 拍摄设置 ━━
             • 手机横屏，30°俯视斜侧面，高度1.5-2米
             ━━ 使用步骤 ━━
-            1. 点击【班级设置】选择班级
-            2. 点击【校准噪声】，全体安静5秒
-            3. 开始跑操，屏幕实时显示评分
+            1. 点击【班级设置】设置班级总人数
+            2. 将红马甲同学置于画面中，系统会自动识别班号
+            3. 点击【校准噪声】，全体安静5秒
+            4. 开始跑操，屏幕实时显示评分
             ━━ 评分维度 ━━
-            • 动作整齐度、出勤率、口号响亮度、间距评分、动作一致性
+            • 排面整齐度、出勤率、口号响亮度、间距评分、动作一致性
             ━━ 查询功能 ━━
             • 历史记录、排名查询
         """.trimIndent()
@@ -138,50 +100,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showClassSetupDialog() {
-    val layout = LinearLayout(this).apply { 
-        orientation = LinearLayout.VERTICAL
-        setPadding(50, 30, 50, 30) 
-    }
-    
-    // 输入框1：班级号
-    val etClass = EditText(this).apply { 
-        hint = "班级号（如1）"
-        setText(currentClassNumber.toString())
-        inputType = InputType.TYPE_CLASS_NUMBER
-    }
-    // 👇 新增：输入框2，用于设置该班级的总人数
-    val etTotal = EditText(this).apply { 
-        hint = "该班总人数（如50）"
-        setText(config.expectedStudents.toString())
-        inputType = InputType.TYPE_CLASS_NUMBER
-    }
-    // 输入框3：时段
-    val etPeriod = EditText(this).apply { 
-        hint = "时段（上午/下午）"
-        setText(currentPeriod)
-        inputType = InputType.TYPE_CLASS_TEXT
-    }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(50, 30, 50, 30) }
+        
+        val tvClass = android.widget.TextView(this).apply { text = "班级号（可手动输入，或等系统自动识别）"; textSize = 14f }
+        val etClass = EditText(this).apply { setText(currentClassNumber.toString()); inputType = InputType.TYPE_CLASS_NUMBER }
+        
+        val tvTotal = android.widget.TextView(this).apply { text = "该班总人数（用于计算出勤率）"; textSize = 14f; setPadding(0, 20, 0, 5) }
+        val etTotal = EditText(this).apply { setText(config.expectedStudents.toString()); inputType = InputType.TYPE_CLASS_NUMBER }
+        
+        val tvPeriod = android.widget.TextView(this).apply { text = "时段（上午/下午）"; textSize = 14f; setPadding(0, 20, 0, 5) }
+        val etPeriod = EditText(this).apply { setText(currentPeriod); inputType = InputType.TYPE_CLASS_TEXT }
 
-    layout.addView(etClass)
-    layout.addView(etTotal)
-    layout.addView(etPeriod)
+        layout.addView(tvClass); layout.addView(etClass)
+        layout.addView(tvTotal); layout.addView(etTotal)
+        layout.addView(tvPeriod); layout.addView(etPeriod)
 
-    AlertDialog.Builder(this)
-        .setTitle("班级设置")
-        .setView(layout)
-        .setPositiveButton("确定") { _, _ ->
-            currentClassNumber = etClass.text.toString().toIntOrNull() ?: 1
-            // 👇 保存总人数到配置中，用于出勤率计算
-            config.expectedStudents = etTotal.text.toString().toIntOrNull() ?: 50
-            currentPeriod = etPeriod.text.toString().ifEmpty { "上午" }
-            
-            overlayView.currentClassNumber = currentClassNumber
-            overlayView.currentPeriod = currentPeriod
-            Toast.makeText(this, "设置成功: ${currentClassNumber}班 应到${config.expectedStudents}人", Toast.LENGTH_SHORT).show()
-        }
-        .setNegativeButton("取消", null)
-        .show()
-}
+        AlertDialog.Builder(this).setTitle("班级设置").setView(layout)
+            .setPositiveButton("确定") { _, _ ->
+                currentClassNumber = etClass.text.toString().toIntOrNull() ?: 1
+                config.expectedStudents = etTotal.text.toString().toIntOrNull() ?: 50
+                currentPeriod = etPeriod.text.toString().ifEmpty { "上午" }
+                overlayView.currentClassNumber = currentClassNumber
+                overlayView.currentPeriod = currentPeriod
+                Toast.makeText(this, "设置: ${currentClassNumber}班 应到${config.expectedStudents}人", Toast.LENGTH_SHORT).show()
+            }.setNegativeButton("取消", null).show()
+    }
 
     private fun showHistoryDialog() {
         val options = arrayOf("按日期+时段查询", "按班级查询", "全部记录")
@@ -253,7 +196,7 @@ class MainActivity : AppCompatActivity() {
     private fun startAll() {
         startCamera()
         audioAnalyzer?.start()
-        overlayView.hint = "请先点击【校准噪声】保持5秒安静"
+        overlayView.hint = "正在寻找红马甲识别班号..."
         overlayView.currentClassNumber = currentClassNumber
         overlayView.currentPeriod = currentPeriod
     }
@@ -271,12 +214,12 @@ class MainActivity : AppCompatActivity() {
                     .setTargetResolution(Size(640, 480))
                     .build()
                 analysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                    try { processFrame(imageProxy) } catch (e: Exception) { saveCrashLog(e) }
+                    try { processFrame(imageProxy) } catch (e: Exception) { }
                     finally { imageProxy.close() }
                 }
                 provider.unbindAll()
                 provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
-            } catch (e: Exception) { saveCrashLog(e) }
+            } catch (e: Exception) { }
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -290,54 +233,47 @@ class MainActivity : AppCompatActivity() {
 
         scope.launch {
             try {
-                // 1. 姿态检测
-                val result = poseAnalyzer?.detect(rotated) ?: return@launch
+                // 1. 人脸检测（用于人数和动作一致性）
+                val faceBoxes = faceAnalyzer?.detect(rotated) ?: emptyList()
+                val faceCenters = faceBoxes.map { it.centerX to it.centerY }
+                val currentFaceYList = faceBoxes.map { it.centerY }
 
-                val shoulderPoints = mutableListOf<Pair<Float, Float>>()
-                val people = mutableListOf<OverlayView.Person>()
-                val personLandmarks = mutableListOf<List<Pair<Float, Float>>>()
-                val currentShoulderYList = mutableListOf<Float>()
-                val currentHeadYList = mutableListOf<Float>()
-
-                result.landmarks().forEach { lms ->
-                    val ls = lms[11]; val rs = lms[12]
-                    if (ls.visibility().orElse(0f) > config.minConfidence && rs.visibility().orElse(0f) > config.minConfidence) {
-                        val sX = (ls.x() + rs.x()) / 2 * rotated.width
-                        val sY = (ls.y() + rs.y()) / 2 * rotated.height
-                        shoulderPoints.add(sX to sY)
-                        currentShoulderYList.add(sY)
+                // 2. 自动识别红马甲班号
+                val recognizedClass = jerseyRecognizer?.recognizeClassNumber(rotated)
+                if (recognizedClass != null && recognizedClass in 1..99) {
+                    currentClassNumber = recognizedClass
+                    withContext(Dispatchers.Main) {
+                        overlayView.currentClassNumber = currentClassNumber
+                        Toast.makeText(this@MainActivity, "自动识别到班号: ${currentClassNumber}班", Toast.LENGTH_SHORT).show()
                     }
-                    val nose = lms[0]
-                    if (nose.visibility().orElse(0f) > config.minConfidence) {
-                        currentHeadYList.add(nose.y() * rotated.height)
-                    }
-                    personLandmarks.add(lms.map { it.x() to it.y() })
-                    people.add(OverlayView.Person(lms))
                 }
 
-                // 2. 人脸检测
-                val faceBoxes = faceAnalyzer?.detect(rotated) ?: emptyList()
-                faceBoxes.forEach { currentHeadYList.add(it.centerY) }
-
                 // 3. 评分计算
-                val alignment = ScoringEngine.scoreAlignment(shoulderPoints, config.alignmentSensitivity, config.sameRowThreshold)
-                val count = maxOf(people.size, faceBoxes.size)
+                val alignment = ScoringEngine.scoreAlignment(faceCenters, config.alignmentSensitivity, config.sameRowThreshold)
+                
+                // 人数：过滤掉特别小的误检（比如远处的模糊人脸），人脸检测通常比姿态检测准
+                val count = faceBoxes.size 
                 val countScore = ScoringEngine.scoreCount(count, config.expectedStudents)
+                
                 val snr = audioAnalyzer?.getSnr() ?: 0f
                 val loudness = ScoringEngine.scoreLoudness(snr, config.snrMin, config.snrMax)
-                val motion = ScoringEngine.scoreMotionConsistency(currentHeadYList, currentShoulderYList, prevHeadYList, prevShoulderYList, config.motionSensitivity)
-                prevHeadYList = currentHeadYList; prevShoulderYList = currentShoulderYList
-                val spacing = if (shoulderPoints.isNotEmpty()) {
-                    ScoringEngine.scoreSpacing(shoulderPoints.maxByOrNull { it.second }?.second ?: 0f, null, config.idealSpacing, config.spacingTolerance)
+                
+                val motion = ScoringEngine.scoreMotionConsistency(currentFaceYList, prevFaceYList, config.motionSensitivity)
+                prevFaceYList = currentFaceYList
+                
+                val spacing = if (faceCenters.isNotEmpty()) {
+                    ScoringEngine.scoreSpacing(faceCenters.maxByOrNull { it.second }?.second ?: 0f, null, config.idealSpacing, config.spacingTolerance)
                 } else 50f
+                
                 val total = ScoringEngine.combine(alignment, countScore, loudness, spacing, motion, config)
                 val scoreResult = ScoreResult(total, alignment, count, countScore, loudness, spacing, motion, snr)
 
-                // 4. 号码识别
-                val jerseys = jerseyRecognizer?.recognize(rotated, personLandmarks) ?: emptyList()
-
+                // 4. 更新UI
                 withContext(Dispatchers.Main) {
-                    overlayView.update(scoreResult.copy(jerseyNumbers = jerseys), people, jerseys)
+                    // 传递空骨架给 OverlayView，只画人脸框
+                    val peopleList = faceBoxes.map { OverlayView.Person(emptyList()) } 
+                    overlayView.update(scoreResult, peopleList, emptyList(), faceBoxes.map { it.centerX to it.centerY })
+                    
                     val now = System.currentTimeMillis()
                     if (now - lastSaveTime > saveIntervalMs && count > 0) {
                         lastSaveTime = now
@@ -345,9 +281,7 @@ class MainActivity : AppCompatActivity() {
                         scoreDb?.saveScore(currentClassNumber, date, currentPeriod, total, alignment, count, countScore, loudness, spacing, motion, snr)
                     }
                 }
-            } catch (e: Exception) {
-                saveCrashLog(e)
-            }
+            } catch (e: Exception) { }
         }
     }
 
@@ -363,7 +297,6 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         cameraExecutor.shutdown()
         audioAnalyzer?.stop()
-        poseAnalyzer?.close()
         jerseyRecognizer?.close()
         faceAnalyzer?.close()
         scope.cancel()
