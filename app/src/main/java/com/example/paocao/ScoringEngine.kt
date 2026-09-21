@@ -1,52 +1,38 @@
 package com.example.paocao
 
 import kotlin.math.abs
-import kotlin.math.acos
 import kotlin.math.exp
 import kotlin.math.sqrt
 
-/**
- * 所有评分参数，可在APP内实时调整
- */
 data class ScoringConfig(
-    // 权重（总和自动归一化）
-    var alignmentWeight: Float = 0.30f,     // 动作整齐度权重
+    var alignmentWeight: Float = 0.30f,     // 排面整齐权重
     var countWeight: Float = 0.15f,         // 出勤率权重
     var loudnessWeight: Float = 0.20f,      // 口号响亮度权重
     var spacingWeight: Float = 0.15f,       // 间距评分权重
     var motionWeight: Float = 0.20f,        // 动作一致性权重
 
-    // 出勤率
     var expectedStudents: Int = 50,
-
-    // 响亮度
     var snrMin: Float = 10f,
     var snrMax: Float = 25f,
 
-    // 整齐度（排面）
-    var alignmentSensitivity: Float = 2.0f,
-    var sameRowThreshold: Float = 80f,
-
-    // 动作一致性
-    var motionSensitivity: Float = 1.5f,    // 越大越严格
-
-    // 间距评分
-    var idealSpacing: Float = 150f,         // 理想间距（像素）
-    var spacingTolerance: Float = 60f,      // 允许偏差范围（像素）
-
-    // 通用
-    var minConfidence: Float = 0.3f,
+    // 基于人脸的新参数
+    var alignmentSensitivity: Float = 2.0f, // 排面整齐灵敏度
+    var sameRowThreshold: Float = 80f,      // 同排判定阈值
+    var motionSensitivity: Float = 1.5f,    // 动作一致性灵敏度
+    var idealSpacing: Float = 150f,
+    var spacingTolerance: Float = 60f,
+    var minConfidence: Float = 0.3f,        // 人脸置信度
     var calibrationSeconds: Int = 5
 )
 
 data class ScoreResult(
     val total: Float,
-    val alignment: Float,      // 排面整齐度
+    val alignment: Float,
     val count: Int,
-    val countScore: Float,     // 出勤率得分
+    val countScore: Float,
     val loudness: Float,
-    val spacing: Float,        // 间距得分
-    val motion: Float,         // 动作一致性得分
+    val spacing: Float,
+    val motion: Float,
     val snr: Float,
     val jerseyNumbers: List<Int> = emptyList()
 )
@@ -54,16 +40,15 @@ data class ScoreResult(
 object ScoringEngine {
 
     /**
-     * 1. 排面整齐度评分
-     * 原理：按y坐标分组（同排），组内计算x坐标的变异系数
+     * 1. 排面整齐度（基于人脸Y坐标）
      */
     fun scoreAlignment(
-        shoulderPoints: List<Pair<Float, Float>>,
+        faceCenters: List<Pair<Float, Float>>,
         sensitivity: Float,
         rowThreshold: Float
     ): Float {
-        if (shoulderPoints.size < 3) return 0f
-        val sorted = shoulderPoints.sortedBy { it.second }
+        if (faceCenters.size < 3) return 0f
+        val sorted = faceCenters.sortedBy { it.second }
         val groups = mutableListOf<MutableList<Pair<Float, Float>>>()
         var current = mutableListOf(sorted[0])
         for (i in 1 until sorted.size) {
@@ -93,8 +78,7 @@ object ScoringEngine {
     }
 
     /**
-     * 2. 出勤率评分
-     * 原理：检测人数 / 应到人数 × 100
+     * 2. 出勤率
      */
     fun scoreCount(detected: Int, expected: Int): Float {
         if (expected <= 0) return 0f
@@ -102,8 +86,7 @@ object ScoringEngine {
     }
 
     /**
-     * 3. 口号响亮度评分
-     * 原理：信噪比映射到0-100分
+     * 3. 响亮度
      */
     fun scoreLoudness(snr: Float, snrMin: Float, snrMax: Float): Float {
         if (snr <= snrMin) return 0f
@@ -111,85 +94,54 @@ object ScoringEngine {
         return (snr - snrMin) / (snrMax - snrMin) * 100f
     }
 
-       /**
-     * 4. 动作一致性评分 (升级版：基于脑袋和肩膀的Y轴起伏)
-     * 跑操时，所有人的脑袋和肩膀应该同步上下起伏。
-     * 我们通过计算同一帧内所有人头和肩膀Y坐标的标准差，以及跨帧的位移方差来判断。
+    /**
+     * 4. 动作一致性（基于人脸Y坐标的起伏同步率）
      */
     fun scoreMotionConsistency(
-        headYList: List<Float>,
-        shoulderYList: List<Float>,
-        previousHeadYList: List<Float>?,
-        previousShoulderYList: List<Float>?,
+        currentFaceYList: List<Float>,
+        previousFaceYList: List<Float>?,
         sensitivity: Float
     ): Float {
-        if (headYList.size < 3 && shoulderYList.size < 3) return 50f // 数据不足，给中位分
+        if (currentFaceYList.size < 3) return 50f
 
-        // 1. 空间一致性：当前帧，大家是不是在同一个水平线上
-        val headYStdDev = if (headYList.size > 1) {
-            val mean = headYList.average().toFloat()
-            sqrt(headYList.map { (it - mean) * (it - mean) }.average()).toFloat()
-        } else 0f
+        // 当前帧所有人脸的Y坐标标准差（排面是否在一条线上）
+        val meanY = currentFaceYList.average().toFloat()
+        val yStd = sqrt(currentFaceYList.map { (it - meanY) * (it - meanY) }.average()).toFloat()
 
-        val shoulderYStdDev = if (shoulderYList.size > 1) {
-            val mean = shoulderYList.average().toFloat()
-            sqrt(shoulderYList.map { (it - mean) * (it - mean) }.average()).toFloat()
-        } else 0f
-
-        // 2. 时间一致性：上一帧和这一帧，起伏节奏是否一致（计算位移方差）
-        var headJitter = 0f
-        var shoulderJitter = 0f
-        if (previousHeadYList != null && previousHeadYList.size == headYList.size) {
-            headJitter = sqrt(headYList.indices.map {
-                val diff = headYList[it] - previousHeadYList[it]
-                diff * diff
-            }.average()).toFloat()
-        }
-        if (previousShoulderYList != null && previousShoulderYList.size == shoulderYList.size) {
-            shoulderJitter = sqrt(shoulderYList.indices.map {
-                val diff = shoulderYList[it] - previousShoulderYList[it]
+        // 和上一帧对比，起伏是否同步（计算Y坐标变化的方差）
+        var jitter = 0f
+        if (previousFaceYList != null && previousFaceYList.size == currentFaceYList.size) {
+            jitter = sqrt(currentFaceYList.indices.map {
+                val diff = currentFaceYList[it] - previousFaceYList[it]
                 diff * diff
             }.average()).toFloat()
         }
 
-        // 综合空间和时间偏差，映射到0-100分
-        // 分母加了 scaleFactor 防止数值过小导致分数过于敏感
-        val totalDeviation = (headYStdDev * 0.5f) + (shoulderYStdDev * 0.3f) + 
-                            (headJitter * 0.1f) + (shoulderJitter * 0.1f)
-                            
-        return (100f * exp(-sensitivity * totalDeviation / 50f)).coerceIn(0f, 100f)
+        // 综合评分：排面越齐、起伏越同步，分数越高
+        val deviation = (yStd * 0.5f) + (jitter * 0.5f)
+        return (100f * exp(-sensitivity * deviation / 50f)).coerceIn(0f, 100f)
     }
 
     /**
      * 5. 间距评分
-     * 原理：计算队列中最后一个人的位置与前方队伍的距离
-     * 间距太近或太远都扣分
      */
     fun scoreSpacing(
-        currentQueueBottomY: Float,
-        previousQueueTopY: Float?,
+        currentBottomY: Float,
+        previousTopY: Float?,
         idealSpacing: Float,
         tolerance: Float
     ): Float {
-        if (previousQueueTopY == null) return 70f  // 没有前一个班级时给中位分
-
-        val actualSpacing = previousQueueTopY - currentQueueBottomY
-        if (actualSpacing <= 0) return 0f  // 重叠了
-
+        if (previousTopY == null) return 70f
+        val actualSpacing = previousTopY - currentBottomY
+        if (actualSpacing <= 0) return 0f
         val deviation = abs(actualSpacing - idealSpacing)
-        if (deviation <= tolerance) {
-            // 在容差范围内，满分
-            return 100f - (deviation / tolerance) * 20f
+        return if (deviation <= tolerance) {
+            100f - (deviation / tolerance) * 20f
         } else {
-            // 超出容差，逐渐扣分
-            val extraDeviation = deviation - tolerance
-            return (80f * exp(-0.01f * extraDeviation)).coerceIn(0f, 80f)
+            (80f * exp(-0.01f * (deviation - tolerance))).coerceIn(0f, 80f)
         }
     }
 
-    /**
-     * 综合评分
-     */
     fun combine(
         alignment: Float, countScore: Float, loudness: Float,
         spacing: Float, motion: Float, cfg: ScoringConfig
