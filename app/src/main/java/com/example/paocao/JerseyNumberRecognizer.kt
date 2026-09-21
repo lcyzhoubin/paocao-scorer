@@ -14,61 +14,65 @@ class JerseyNumberRecognizer {
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
     /**
-     * 识别红色马甲上的数字
+     * 自动寻找红马甲并识别上面的数字
      */
-    suspend fun recognize(
-        bitmap: Bitmap,
-        persons: List<List<Pair<Float, Float>>>
-    ): List<Int> = withContext(Dispatchers.Default) {
-        val numbers = mutableListOf<Int>()
+    suspend fun recognizeClassNumber(bitmap: Bitmap): Int? = withContext(Dispatchers.Default) {
+        // 1. 寻找红色区域
+        val redRegion = findRedRegion(bitmap) ?: return@withContext null
         
-        for (person in persons) {
-            if (person.size < 12) continue
-            
-            // 定位胸部/腹部区域（号码通常印在这里）
-            val ls = person[11]; val rs = person[12]
-            val lh = person[23]; val rh = person[24]
-            
-            val chestX = ((ls.first + rs.first + lh.first + rh.first) / 4 * bitmap.width).toInt()
-            val chestY = ((ls.second + rs.second + lh.second + rh.second) / 4 * bitmap.height).toInt()
-            
-            // 扩大裁切范围，确保数字完整
-            val shoulderWidth = kotlin.math.abs(rs.first - ls.first) * bitmap.width
-            val cropW = (shoulderWidth * 1.2f).toInt().coerceAtLeast(40)
-            val cropH = (shoulderWidth * 1.5f).toInt().coerceAtLeast(50)
-            
-            val left = (chestX - cropW / 2).coerceIn(0, bitmap.width - 1)
-            val top = (chestY - cropH / 2).coerceIn(0, bitmap.height - 1)
-            val right = (left + cropW).coerceAtMost(bitmap.width)
-            val bottom = (top + cropH).coerceAtMost(bitmap.height)
-            
-            if (right <= left || bottom <= top) continue
-            
-            val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-            
-            // 👇 使用 ML Kit 进行 OCR 识别
-            val image = InputImage.fromBitmap(crop, 0)
-            val resultText = suspendCancellableCoroutine { cont ->
-                recognizer.process(image)
-                    .addOnSuccessListener { text ->
-                        cont.resume(text.text)
-                    }
-                    .addOnFailureListener {
-                        cont.resume("")
-                    }
-            }
-            
-            // 从识别出的文本中提取数字
-            val digits = resultText.filter { it.isDigit() }
-            if (digits.length in 1..3) {
-                digits.toIntOrNull()?.let { numbers.add(it) }
+        // 2. 对红色区域进行裁剪
+        val cropW = (redRegion.right - redRegion.left).coerceAtLeast(30)
+        val cropH = (redRegion.bottom - redRegion.top).coerceAtLeast(30)
+        val crop = Bitmap.createBitmap(bitmap, redRegion.left, redRegion.top, cropW, cropH)
+
+        // 3. 识别文字
+        val image = InputImage.fromBitmap(crop, 0)
+        val resultText = suspendCancellableCoroutine { cont ->
+            recognizer.process(image)
+                .addOnSuccessListener { cont.resume(it.text) }
+                .addOnFailureListener { cont.resume("") }
+        }
+        
+        // 4. 提取数字
+        val digits = resultText.filter { it.isDigit() }
+        if (digits.length in 1..2) {
+            digits.toIntOrNull()
+        } else {
+            null
+        }
+    }
+
+    /**
+     * 简单扫描画面中的红色像素块，定位红马甲
+     */
+    private fun findRedRegion(bitmap: Bitmap): android.graphics.Rect? {
+        var minX = bitmap.width; var maxX = 0
+        var minY = bitmap.height; var maxY = 0
+        var count = 0
+
+        // 抽样扫描，每5个像素扫一次，提高速度
+        for (x in 0 until bitmap.width step 5) {
+            for (y in 0 until bitmap.height step 5) {
+                val pixel = bitmap.getPixel(x, y)
+                val r = Color.red(pixel)
+                val g = Color.green(pixel)
+                val b = Color.blue(pixel)
+                
+                // 判断是否为鲜艳红色
+                if (r > 150 && g < 100 && b < 100 && r > g * 2 && r > b * 2) {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                    count++
+                }
             }
         }
         
-        numbers.distinct()
+        // 红色区域太小则忽略（过滤背景中的红车等）
+        if (count < 20 || maxX - minX < 20 || maxY - minY < 20) return null
+        return android.graphics.Rect(minX, minY, maxX, maxY)
     }
 
-    fun close() {
-        recognizer.close()
-    }
+    fun close() = recognizer.close()
 }
