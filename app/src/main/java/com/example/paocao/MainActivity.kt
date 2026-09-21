@@ -223,7 +223,15 @@ class MainActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+      // 👇 新增：用于控制处理频率的变量
+    private var frameCount = 0
+    private var lastOcrTime = 0L
+
     private fun processFrame(imageProxy: ImageProxy) {
+        // 1. 降频：每 3 帧处理一次，极大降低 CPU 负载，防止卡死
+        frameCount++
+        if (frameCount % 3 != 0) return
+
         val bitmap = imageProxy.toBitmap()
         val rotation = imageProxy.imageInfo.rotationDegrees
         val rotated = if (rotation != 0) {
@@ -233,25 +241,29 @@ class MainActivity : AppCompatActivity() {
 
         scope.launch {
             try {
-                // 1. 人脸检测（用于人数和动作一致性）
+                // 2. 人脸检测
                 val faceBoxes = faceAnalyzer?.detect(rotated) ?: emptyList()
                 val faceCenters = faceBoxes.map { it.centerX to it.centerY }
                 val currentFaceYList = faceBoxes.map { it.centerY }
 
-                // 2. 自动识别红马甲班号
-                val recognizedClass = jerseyRecognizer?.recognizeClassNumber(rotated)
-                if (recognizedClass != null && recognizedClass in 1..99) {
-                    currentClassNumber = recognizedClass
-                    withContext(Dispatchers.Main) {
-                        overlayView.currentClassNumber = currentClassNumber
-                        Toast.makeText(this@MainActivity, "自动识别到班号: ${currentClassNumber}班", Toast.LENGTH_SHORT).show()
+                // 3. 自动识别红马甲班号（只在识别到人脸，且距离上次识别超过3秒时才做）
+                val now = System.currentTimeMillis()
+                if (faceBoxes.isNotEmpty() && now - lastOcrTime > 3000) {
+                    lastOcrTime = now
+                    val recognizedClass = jerseyRecognizer?.recognizeClassNumber(rotated)
+                    if (recognizedClass != null && recognizedClass in 1..99) {
+                        currentClassNumber = recognizedClass
+                        withContext(Dispatchers.Main) {
+                            overlayView.currentClassNumber = currentClassNumber
+                            Toast.makeText(this@MainActivity, "自动识别到班号: ${currentClassNumber}班", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
 
-                // 3. 评分计算
+                // 4. 评分计算
                 val alignment = ScoringEngine.scoreAlignment(faceCenters, config.alignmentSensitivity, config.sameRowThreshold)
                 
-                // 人数：过滤掉特别小的误检（比如远处的模糊人脸），人脸检测通常比姿态检测准
+                // 人数：过滤掉特别小的误检，人脸检测通常比姿态检测准
                 val count = faceBoxes.size 
                 val countScore = ScoringEngine.scoreCount(count, config.expectedStudents)
                 
@@ -268,23 +280,22 @@ class MainActivity : AppCompatActivity() {
                 val total = ScoringEngine.combine(alignment, countScore, loudness, spacing, motion, config)
                 val scoreResult = ScoreResult(total, alignment, count, countScore, loudness, spacing, motion, snr)
 
-                // 4. 更新UI
+                // 5. 更新UI
                 withContext(Dispatchers.Main) {
-                    // 传递空骨架给 OverlayView，只画人脸框
                     val peopleList = faceBoxes.map { OverlayView.Person(emptyList()) } 
-                    overlayView.update(scoreResult, peopleList, emptyList(), faceBoxes.map { it.centerX to it.centerY })
+                    overlayView.update(scoreResult, peopleList, emptyList(), faceCenters)
                     
-                    val now = System.currentTimeMillis()
                     if (now - lastSaveTime > saveIntervalMs && count > 0) {
                         lastSaveTime = now
                         val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
                         scoreDb?.saveScore(currentClassNumber, date, currentPeriod, total, alignment, count, countScore, loudness, spacing, motion, snr)
                     }
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) { 
+                // 防止因为单帧出错导致崩溃
+            }
         }
     }
-
     private fun hasPermissions() = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
