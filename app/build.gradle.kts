@@ -53,9 +53,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
 
-    implementation("com.google.mediapipe:tasks-vision:0.10.9")
-    
-    // 👇 新增：ML Kit 人脸检测和文字识别
+    // 仅保留 ML Kit：人脸检测（用于计数和动作统一） + 文字识别（用于识别红马甲数字）
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.mlkit:text-recognition:16.0.0")
     
