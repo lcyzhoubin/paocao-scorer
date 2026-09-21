@@ -3,7 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-android {
+android {    packagingOptions {
+        resources.excludes.add("META-INF/*")
+    }
     namespace = "com.example.paocao"
     compileSdk = 34
 
